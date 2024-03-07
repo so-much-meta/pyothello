@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+
+[project]
+name = "pyothello"
+version = "0.0.1"
+description = "Othello for RL experimentation"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {file = "LICENSE.txt"}
+dependencies = [
+  "torch"
+]
+
+[tool.setuptools]
+# package-data = {"sample" = ["*.dat"]}
+
+[tool.black]
+line-length = 120
+target-version = ['py311']
+include = '\.pyi?$'
