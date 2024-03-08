@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
+import itertools
 import numpy as np
 from .othello import *
 
@@ -129,48 +130,40 @@ class NeuralEvaluator(Evaluator):
             raise RuntimeError(f"Invalid weights shape: {weights_shape}")
 
     def load_flat_131(self, board_state: BoardState):  # Net1 type model
-        # black_idx = 0
-        # white_idx = 64
-        # for row, col in itertools.product(range(8), repeat=2):
-        #     color = board_state.board[row][col]
-        #     if color == Color.BLACK:
-        #         self.input_tensor[black_idx] = 1
-        #         self.input_tensor[white_idx] = 0
-        #     elif color == Color.WHITE:
-        #         self.input_tensor[black_idx] = 0
-        #         self.input_tensor[white_idx] = 1
-        #     else:
-        #         self.input_tensor[black_idx] = 0
-        #         self.input_tensor[white_idx] = 0
-        #     black_idx += 1
-        #     white_idx += 1
-        flattened = board_state.board.ravel()
-        self.input_tensor[0:64] = torch.from_numpy(flattened==C_BLACK)
-        self.input_tensor[64:128] = torch.from_numpy(flattened==C_WHITE)
-        self.input_tensor[128] = bool(board_state.passes)
-        self.input_tensor[129] = board_state.current == C_BLACK
-        self.input_tensor[130] = board_state.current == C_WHITE
+        black_idx = 0
+        white_idx = 64
+        for row, col in itertools.product(range(8), repeat=2):
+            color = board_state.board[row][col]
+            if color == Color.BLACK:
+                self.input_tensor[black_idx] = 1
+                self.input_tensor[white_idx] = 0
+            elif color == Color.WHITE:
+                self.input_tensor[black_idx] = 0
+                self.input_tensor[white_idx] = 1
+            else:
+                self.input_tensor[black_idx] = 0
+                self.input_tensor[white_idx] = 0
+            black_idx += 1
+            white_idx += 1
+        self.input_tensor[128] = 1 if board_state.passes else 0
+        self.input_tensor[129] = 1 if board_state.current == Color.BLACK else 0
+        self.input_tensor[130] = 1 if board_state.current == Color.WHITE else 0
 
     def load_conv_5(self, board_state: BoardState):
-        self.input_tensor[0] = torch.from_numpy(board_state.board == C_BLACK)
-        self.input_tensor[1] = torch.from_numpy(board_state.board == C_WHITE)
-        self.input_tensor[2] = bool(board_state.passes)
-        self.input_tensor[3] = board_state.current == C_BLACK
-        self.input_tensor[4] = board_state.current == C_WHITE
-        # for row, col in itertools.product(range(8), repeat=2):
-        #     color = board_state.board[row][col]
-        #     if color == C_BLACK:
-        #         self.input_tensor[0][row][col] = 1
-        #         self.input_tensor[1][row][col] = 0
-        #     elif color == C_WHITE:
-        #         self.input_tensor[0][row][col] = 0
-        #         self.input_tensor[1][row][col] = 1
-        #     else:
-        #         self.input_tensor[0][ row][col] = 0
-        #         self.input_tensor[1][row][col] = 0
-        #     self.input_tensor[2][row][col] = 1 if board_state.passes else 0
-        #     self.input_tensor[3] = 1 if board_state.current == C_BLACK else 0
-        #     self.input_tensor[4] = 1 if board_state.current == C_WHITE else 0
+        for row, col in itertools.product(range(8), repeat=2):
+            color = board_state.board[row][col]
+            if color == Color.BLACK:
+                self.input_tensor[0][row][col] = 1
+                self.input_tensor[1][row][col] = 0
+            elif color == Color.WHITE:
+                self.input_tensor[0][row][col] = 0
+                self.input_tensor[1][row][col] = 1
+            else:
+                self.input_tensor[0][ row][col] = 0
+                self.input_tensor[1][row][col] = 0
+            self.input_tensor[2][row][col] = 1 if board_state.passes else 0
+            self.input_tensor[3] = 1 if board_state.current == Color.BLACK else 0
+            self.input_tensor[4] = 1 if board_state.current == Color.WHITE else 0
 
     def raw_eval(self, board_state: BoardState):
         self.load(board_state)
@@ -178,7 +171,7 @@ class NeuralEvaluator(Evaluator):
 
     def eval(self, board_state: BoardState):
         result = self.raw_eval(board_state)
-        return result.item() if board_state.current == C_BLACK else 1 - result.item()
+        return result.item() if board_state.current == Color.BLACK else 1 - result.item()
 
 
 class NeuralPlayer(Player):
@@ -217,7 +210,6 @@ class Trainer:
     def __init__(self):
         # self.net = Net1()
         # self.net = Net3()
-        # self.net = Net1b()
         self.net = Net1b()
         self.evaluator = NeuralEvaluator(self.net)
         self.player = NeuralPlayer(self.evaluator, temperature=0.5)
@@ -243,15 +235,15 @@ class Trainer:
     def learn_from_game(self):
         self.net.train()
         winner = self.game.board.state.winner
-        if winner == C_BLACK:
+        if winner == Color.BLACK:
             y_val = 1.0
-        elif winner == C_WHITE:
+        elif winner == Color.WHITE:
             y_val = 0.0
         else:
             y_val = 0.5
-        self.optimizer.zero_grad()            
         for state in self.game.board.history:
             y_pred = self.evaluator.raw_eval(state)
             loss = self.loss_fn(y_pred, torch.tensor([y_val]))
+            self.optimizer.zero_grad()
             loss.backward()
-        self.optimizer.step()
+            self.optimizer.step()

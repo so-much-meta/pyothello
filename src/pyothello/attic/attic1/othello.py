@@ -3,16 +3,19 @@ import itertools
 import random
 from typing import Iterator
 import copy
-import numpy as np
 
-C_EMPTY = 0
-C_BLACK = 1
-C_WHITE = 2
 
-COLORNAMES = {C_EMPTY: "EMPTY", C_BLACK: "BLACK", C_WHITE: "C_WHITE"}
+class Color(enum.Enum):
+    EMPTY = 0
+    BLACK = 1
+    WHITE = 2
 
-def next_color(color):
-    return 3 - color
+    def next(self):
+        return Color(3 - self.value)
+
+
+C = Color
+
 
 class PassClass:
     __instance = None
@@ -30,13 +33,12 @@ PASS = PassClass()
 
 
 class BoardState:
-    __slots__ = ['current', 'gameover', 'winner', 'passes', 'board']
     _DELTAS = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
-    _EMPTY_BOARD = np.full((8, 8), C_EMPTY, dtype=np.uint8)
-    _EMPTY_BOARD[3, 3] = C_WHITE
-    _EMPTY_BOARD[3, 4] = C_BLACK
-    _EMPTY_BOARD[4, 3] = C_BLACK
-    _EMPTY_BOARD[4, 4] = C_WHITE
+    _EMPTY_BOARD = [[C.EMPTY] * 8 for _ in range(8)]
+    _EMPTY_BOARD[3][3] = C.WHITE
+    _EMPTY_BOARD[3][4] = C.BLACK
+    _EMPTY_BOARD[4][3] = C.BLACK
+    _EMPTY_BOARD[4][4] = C.WHITE
 
     def __init__(self):
         self.reset()
@@ -48,30 +50,30 @@ class BoardState:
         result.gameover = self.gameover
         result.winner = self.winner
         result.passes = self.passes
-        result.board = self.board.copy()
+        result.board = [l[:] for l in self.board]
         return result
 
     def __str__(self):
-        map = {C_EMPTY: " ", C_BLACK: "#", C_WHITE: "O"}
+        map = {C.EMPTY: " ", C.BLACK: "#", C.WHITE: "O"}
         lines = []
         for row in range(8):
             line = []
             for col in range(8):
-                line.append(map[self.board[row, col]])
+                line.append(map[self.board[row][col]])
             lines.append("".join(line))
         if not self.gameover:
-            lines.append(f"NEXT: {COLORNAMES[self.current]}")
+            lines.append(f"NEXT: {self.current.name}")
         else:
-            winner = COLORNAMES[self.winner] if self.winner is not None else "TIED"
+            winner = self.winner.name if self.winner is not None else "TIED"
             lines.append(f"WINNER: {winner}")
         return "\n".join(lines)
 
     def reset(self):
         self.winner = None
         self.gameover = False
-        self.current = C_BLACK
+        self.current = C.BLACK
         self.passes = 0
-        self.board = self._EMPTY_BOARD.copy()
+        self.board = [l[:] for l in self._EMPTY_BOARD]
 
     @staticmethod
     def inbounds(row, col):
@@ -80,30 +82,30 @@ class BoardState:
     def move(self, move):
         if move is PASS:
             self.passes += 1
-            self.current = next_color(self.current)
+            self.current = self.current.next()
             if self.passes == 2:
                 self._finish_and_score()
             return
         row, col = move
         self.passes = 0
-        other = next_color(self.current)
-        self.board[row, col] = self.current
+        other = self.current.next()
+        self.board[row][col] = self.current
 
         def direct(dr, dc):  # delta row, delta col, play move
             cr, cc = row + dr, col + dc  # current row, current col
             if not self.inbounds(cr, cc):
                 return
-            if self.board[cr, cc] != other:
+            if self.board[cr][cc] != other:
                 return
-            while self.board[cr, cc] == other:
+            while self.board[cr][cc] == other:
                 cr, cc = cr + dr, cc + dc
                 if not self.inbounds(cr, cc):
                     return
-            if self.board[cr, cc] != self.current:
+            if self.board[cr][cc] != self.current:
                 return
             cr, cc = row + dr, col + dc
-            while self.board[cr, cc] == other:
-                self.board[cr, cc] = self.current
+            while self.board[cr][cc] == other:
+                self.board[cr][cc] = self.current
                 cr, cc = cr + dr, cc + dc
 
         for dr, dc in itertools.product((-1, 0, 1), repeat=2):
@@ -112,32 +114,34 @@ class BoardState:
             direct(dr, dc)
         self.current = other
 
-    def _is_legal(self, row: int, col: int) -> bool:
-        #if self.board[row, col] != C_EMPTY:
-        #    return False
-        other = next_color(self.current)
+    def is_legal(self, row: int, col: int) -> bool:
+        if self.board[row][col] != C.EMPTY:
+            return False
+        other = self.current.next()
 
         def direct(dr, dc):  # delta row, delta col, play move
             cr, cc = row + dr, col + dc  # current row, current col
             if not self.inbounds(cr, cc):
                 return False
-            if self.board[cr, cc] != other:
+            if self.board[cr][cc] != other:
                 return False
-            while self.board[cr, cc] == other:
+            while self.board[cr][cc] == other:
                 cr, cc = cr + dr, cc + dc
                 if not self.inbounds(cr, cc):
                     return False
-            if self.board[cr, cc] != self.current:
+            if self.board[cr][cc] != self.current:
                 return False
             return True
 
         for dr, dc in self._DELTAS:
+            if dr == dc == 0:
+                continue
             if direct(dr, dc):
                 return True
         return False
 
     def gen_legal(self) -> Iterator[tuple[int, int]]:
-        other = next_color(self.current)
+        other = self.current.next()
 
         def gen_neighbors(row, col):
             for dr, dc in self._DELTAS:
@@ -146,45 +150,31 @@ class BoardState:
                     yield nr, nc
 
         # We'll look for all stones of opposite color and check if neighbors are legal
+        visited = set()
         found_legal = False
-        poss = self.board == C_EMPTY
-        neighbors = np.zeros((8, 8), dtype=bool)
-        others = self.board==other
-        neighbors[1:, 1:] |= others[:-1, :-1]
-        neighbors[1:, :] |= others[:-1, :]
-        neighbors[1:, :-1] |= others[:-1, 1:]
-        neighbors[:, 1:] |= others[:, :-1]
-        neighbors[:, :-1] |= others[:, 1:]
-        neighbors[:-1, 1:] |= others[1:, :-1]
-        neighbors[:-1, :] |= others[1:, :]
-        neighbors[:-1, :-1] |= others[1:, 1:]
-        poss &= neighbors
-
- 
-        # others = np.argwhere(self.board==other)
-        # neighbors = np.concatenate([others + delta for delta in self._DELTAS])
-        # neighbors = np.unique(neighbors, axis=0)
-        # neighbors = np.compress(  (neighbors[:, 0] >= 0)
-        #                        & (neighbors[:, 0] < 8)
-        #                        & (neighbors[:, 1] >= 0)
-        #                        & (neighbors[:, 1] < 8), neighbors, axis=0)
-        for nr, nc in zip(*poss.nonzero()):
-            if self._is_legal(nr, nc):
-                found_legal = True
-                yield nr, nc
+        for row, col in itertools.product(range(8), repeat=2):
+            if self.board[row][col] != other:
+                continue
+            for nr, nc in gen_neighbors(row, col):
+                if (nr, nc) in visited:
+                    continue
+                visited.add((nr, nc))
+                if self.is_legal(nr, nc):
+                    found_legal = True
+                    yield nr, nc
         if not found_legal:
             yield PASS
 
     def _finish_and_score(self):
         self.gameover = True
-        score = {C_BLACK: 0, C_WHITE: 0, C_EMPTY: 0}
+        score = {C.BLACK: 0, C.WHITE: 0, C.EMPTY: 0}
         for row, col in itertools.product(range(8), repeat=2):
-            score[self.board[row, col]] += 1
-        sblack, swhite = score[C_BLACK], score[C_WHITE]
+            score[self.board[row][col]] += 1
+        sblack, swhite = score[C.BLACK], score[C.WHITE]
         if sblack > swhite:
-            self.winner = C_BLACK
+            self.winner = C.BLACK
         elif swhite > sblack:
-            self.winner = C_WHITE
+            self.winner = C.WHITE
         else:
             self.winner = None
 
@@ -232,7 +222,7 @@ class Game:
             player_black = RandomPlayer()
         if player_white is None:
             player_white = RandomPlayer()
-        self.players = {C_BLACK: player_black, C_WHITE: player_white}
+        self.players = {C.BLACK: player_black, C.WHITE: player_white}
         self.board = Board()
         self._log = log
 
@@ -246,7 +236,7 @@ class Game:
     def play_one_turn(self) -> bool:  # return is_finished
         current = self.board.state.current
         choice = self.players[current].choose(self.board)
-        self.log(f"Color {COLORNAMES[current]}: {choice}")
+        self.log(f"Color {current.name}: {choice}")
         self.board.move(choice)
         self.log(f"{self.board}\n")
         if self.board.state.gameover:
