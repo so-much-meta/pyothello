@@ -5,7 +5,6 @@ import torch.nn.functional as F
 import numpy as np
 from .othello import *
 
-
 class Evaluator:
     """Evaluate a board state."""
 
@@ -129,21 +128,6 @@ class NeuralEvaluator(Evaluator):
             raise RuntimeError(f"Invalid weights shape: {weights_shape}")
 
     def load_flat_131(self, board_state: BoardState):  # Net1 type model
-        # black_idx = 0
-        # white_idx = 64
-        # for row, col in itertools.product(range(8), repeat=2):
-        #     color = board_state.board[row][col]
-        #     if color == Color.BLACK:
-        #         self.input_tensor[black_idx] = 1
-        #         self.input_tensor[white_idx] = 0
-        #     elif color == Color.WHITE:
-        #         self.input_tensor[black_idx] = 0
-        #         self.input_tensor[white_idx] = 1
-        #     else:
-        #         self.input_tensor[black_idx] = 0
-        #         self.input_tensor[white_idx] = 0
-        #     black_idx += 1
-        #     white_idx += 1
         flattened = board_state.board.ravel()
         self.input_tensor[0:64] = torch.from_numpy(flattened==C_BLACK)
         self.input_tensor[64:128] = torch.from_numpy(flattened==C_WHITE)
@@ -157,55 +141,58 @@ class NeuralEvaluator(Evaluator):
         self.input_tensor[2] = bool(board_state.passes)
         self.input_tensor[3] = board_state.current == C_BLACK
         self.input_tensor[4] = board_state.current == C_WHITE
-        # for row, col in itertools.product(range(8), repeat=2):
-        #     color = board_state.board[row][col]
-        #     if color == C_BLACK:
-        #         self.input_tensor[0][row][col] = 1
-        #         self.input_tensor[1][row][col] = 0
-        #     elif color == C_WHITE:
-        #         self.input_tensor[0][row][col] = 0
-        #         self.input_tensor[1][row][col] = 1
-        #     else:
-        #         self.input_tensor[0][ row][col] = 0
-        #         self.input_tensor[1][row][col] = 0
-        #     self.input_tensor[2][row][col] = 1 if board_state.passes else 0
-        #     self.input_tensor[3] = 1 if board_state.current == C_BLACK else 0
-        #     self.input_tensor[4] = 1 if board_state.current == C_WHITE else 0
 
     def raw_eval(self, board_state: BoardState):
         self.load(board_state)
         return self.net(self.input_tensor)
 
-    def eval(self, board_state: BoardState):
-        result = self.raw_eval(board_state)
-        return result.item() if board_state.current == C_BLACK else 1 - result.item()
+    # def eval(self, board_state: BoardState):
+    #     result = self.raw_eval(board_state)
+    #     raw = result.item()
+    #     eval = raw if board_state.
+    #     return result.item() if board_state.current == C_BLACK else 1 - result.item()
 
 
 class NeuralPlayer(Player):
     def __init__(self, evaluator, temperature=None):
         self.temperature = temperature
         self.evaluator = evaluator
+        self.best = {} # state -> (raw) eval to train it
         self._log = False
 
+    def clear_best(self):
+        self.best.clear()
+
     def choose(self, board: Board):
-        eval_choices = []
+        raw_evals = []
+        evals = []
+        choices = []
+        my_color = board.state.current
         for choice in board.gen_legal():
-            if choice is PASS and (not self._log or board.state.passes):
-                return choice
             board.move(choice)
-            eval = 1 - self.evaluator.eval(board.state)  # minimize next player's eval
-            eval_choices.append((eval, choice))
+            if board.state.gameover:
+                raw_eval = 1.0 if board.state.winner == C_BLACK else 0.0
+            else:
+                raw_eval = self.evaluator.raw_eval(board.state).item()
+            my_eval = raw_eval if my_color == C_BLACK else 1 - raw_eval
+            raw_evals.append(raw_eval)
+            evals.append(my_eval)
+            choices.append(choice)
             board.undo()
+        best_index = np.argmax(evals)
+        best_raw_eval, best_eval, best_choice = raw_evals[best_index], evals[best_index], choices[best_index]
+        self.best[board.state] = best_raw_eval
         if self.temperature is None:
-            eval, choice = max(eval_choices)
             if self._log:
-                print(f"Chose {choice} with eval {eval}")
-            return choice
-        evals, choices = zip(*eval_choices)
-        arr = np.log(evals) / self.temperature
-        arr = np.exp(arr)
-        arr = arr / arr.sum()
-        result_idx = np.random.choice(len(arr), p=arr)
+                print(f"Chose {best_choice} with eval {best_eval}")
+            return best_choice
+        if len(evals) == 1:
+            result_idx = 0
+        else:
+            arr = np.log(evals) / self.temperature
+            arr = np.exp(arr)
+            arr = arr / arr.sum()
+            result_idx = np.random.choice(len(arr), p=arr)
         choice = choices[result_idx]
         eval = evals[result_idx]
         if self._log:
@@ -242,15 +229,9 @@ class Trainer:
 
     def learn_from_game(self):
         self.net.train()
-        winner = self.game.board.state.winner
-        if winner == C_BLACK:
-            y_val = 1.0
-        elif winner == C_WHITE:
-            y_val = 0.0
-        else:
-            y_val = 0.5
         self.optimizer.zero_grad()            
         for state in self.game.board.history:
+            y_val = self.player.best[state]
             y_pred = self.evaluator.raw_eval(state)
             loss = self.loss_fn(y_pred, torch.tensor([y_val]))
             loss.backward()

@@ -1,8 +1,6 @@
-import enum
 import itertools
 import random
 from typing import Iterator
-import copy
 import numpy as np
 
 C_EMPTY = 0
@@ -52,7 +50,7 @@ class BoardState:
         return result
 
     def __str__(self):
-        map = {C_EMPTY: " ", C_BLACK: "#", C_WHITE: "O"}
+        map = {C_EMPTY: " . ", C_BLACK: " X ", C_WHITE: " O "}
         lines = []
         for row in range(8):
             line = []
@@ -60,10 +58,10 @@ class BoardState:
                 line.append(map[self.board[row, col]])
             lines.append("".join(line))
         if not self.gameover:
-            lines.append(f"NEXT: {COLORNAMES[self.current]}")
+            lines.append(f"| NEXT: {COLORNAMES[self.current]}")
         else:
             winner = COLORNAMES[self.winner] if self.winner is not None else "TIED"
-            lines.append(f"WINNER: {winner}")
+            lines.append(f"| WINNER: {winner}")
         return "\n".join(lines)
 
     def reset(self):
@@ -224,7 +222,6 @@ class RandomPlayer:
         if not choices:
             return None
         return random.choice(choices)
-
 
 class Game:
     def __init__(self, player_black=None, player_white=None, log=True):
